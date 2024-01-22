@@ -130,6 +130,13 @@ class SamPredictor:
           (np.ndarray): An array of shape CxHxW, where C is the number
             of masks and H=W=256. These low resolution logits can be passed to
             a subsequent iteration as mask input.
+          (list): List of lists of polygons. They are of shape CxMxNx2. Here,
+            C represents number of masks.
+            N represents number of points of the polygon.
+            M represents inside and outside polygons.
+            If M == 1, it means single polygon which is inside.
+            If M == 2 or more, it means that the first polygon is inside
+            and the rest are outside.
         """
         if not self.is_image_set:
             raise RuntimeError("An image must be set with .set_image(...) before mask prediction.")
@@ -164,32 +171,73 @@ class SamPredictor:
         masks_np = masks[0].detach().cpu().numpy()
         iou_predictions_np = iou_predictions[0].detach().cpu().numpy()
         low_res_masks_np = low_res_masks[0].detach().cpu().numpy()
-        return masks_np, iou_predictions_np, low_res_masks_np
+        polygons_np = [self.get_bounding_polygon(mask) for mask in masks_np]
+        return masks_np, iou_predictions_np, low_res_masks_np, polygons_np
 
 
-
-    def get_bounding_polygon(self, mask):
+    def get_bounding_polygon(self, mask, eps_value=0.005):
         """ Gets the bounding polygon for the given mask
 
         Args:
             mask(array):
                 Input array
+            eps_value(float):
+                Value for approxiamation
 
         Returns:
             (list):
                 polygon_pts(list):
-                    A list of list consisting of polygon points
+                    A list of list consisting of polygon points.
+                    Each element in list is of shape M x N x 2:
+                    Here N represents number of points of the polygon.
+                    M represents inside and outside polygons.
+                    If M == 1, it means single polygon which is inside.
+                    If M == 2 or more, it means that the first polygon is inside
+                    and the rest are outside.
         """
         mask = np.uint8(np.where(mask != 0, 255, 0))
         # Find all contours
         all_contours, all_hierarchy = cv2.findContours(mask,
                                                     cv2.RETR_TREE,
                                                     cv2.CHAIN_APPROX_SIMPLE)
-        cnts = imutils.grab_contours(all_contours)
-        eps = 0.001 * cv2.arcLength(max(cnts, key=cv2.contourArea), True
-        
-        approx = cv2.approxPolyDP(c, eps, True)
-        return None
+        type_map = {}
+        for i, contour in enumerate(all_contours):
+            idx = str(i)
+            if len(contour) < 4:
+                continue
+
+            epsilon = eps_value * cv2.arcLength(contour, True)
+
+            approx = cv2.approxPolyDP(contour, epsilon, True).squeeze().tolist()
+            if not np.array_equal(approx[0], approx[-1]):
+                approx += [approx[0]]
+
+            parent = str(all_hierarchy[0][i][3])
+
+            if parent == "-1":
+                type_map[idx] = {}
+                type_map[idx]["type"] = "inside"
+                type_map[idx]["poly"] = [approx]
+            else:
+                parent_dict = type_map.get(parent, None)
+                parent_type = parent_dict["type"]
+                if parent_type == "inside":
+                    type_map[idx] = {}
+                    type_map[idx]["type"] = "outside"
+                    type_map[parent]["poly"].append(approx)
+                else:
+                    type_map[idx] = {}
+                    type_map[idx]["type"] = "inside"
+                    type_map[idx]["poly"] = [approx]
+
+        polygons = []
+        for key in list(type_map.keys()):
+            value = type_map[key]
+            if value["type"] == "outside":
+                continue
+            else:
+                polygons.append(type_map[key]["poly"])
+        return polygons
 
 
     @torch.no_grad()
