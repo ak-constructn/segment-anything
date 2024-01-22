@@ -4,13 +4,14 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import numpy as np
-import torch
-
-from segment_anything.modeling import Sam
-
 from typing import Optional, Tuple
 
+import cv2
+import torch
+import imutils
+import numpy as np
+
+from segment_anything.modeling import Sam
 from .utils.transforms import ResizeLongestSide
 
 
@@ -164,6 +165,32 @@ class SamPredictor:
         iou_predictions_np = iou_predictions[0].detach().cpu().numpy()
         low_res_masks_np = low_res_masks[0].detach().cpu().numpy()
         return masks_np, iou_predictions_np, low_res_masks_np
+
+
+
+    def get_bounding_polygon(self, mask):
+        """ Gets the bounding polygon for the given mask
+
+        Args:
+            mask(array):
+                Input array
+
+        Returns:
+            (list):
+                polygon_pts(list):
+                    A list of list consisting of polygon points
+        """
+        mask = np.uint8(np.where(mask != 0, 255, 0))
+        # Find all contours
+        all_contours, all_hierarchy = cv2.findContours(mask,
+                                                    cv2.RETR_TREE,
+                                                    cv2.CHAIN_APPROX_SIMPLE)
+        cnts = imutils.grab_contours(all_contours)
+        eps = 0.001 * cv2.arcLength(max(cnts, key=cv2.contourArea), True
+        
+        approx = cv2.approxPolyDP(c, eps, True)
+        return None
+
 
     @torch.no_grad()
     def predict_torch(
