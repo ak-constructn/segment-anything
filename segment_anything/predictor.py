@@ -15,7 +15,7 @@ from segment_anything.modeling import Sam
 from .utils.transforms import ResizeLongestSide
 
 
-class SamPredictor:
+class SamPredictorPoly:
     def __init__(
         self,
         sam_model: Sam,
