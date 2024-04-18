@@ -121,13 +121,19 @@ class Sam(nn.Module):
                 original_size=image_record["original_size"],
             )
             masks = masks > self.mask_threshold
+            polygons_np = [self.get_bounding_polygon(mask) for mask in masks]
+
             outputs.append(
                 {
                     "masks": masks,
                     "iou_predictions": iou_predictions,
                     "low_res_logits": low_res_masks,
+                    "polygons": polygons_np
                 }
             )
+
+        # return masks_np, iou_predictions_np, low_res_masks_np, polygons_np
+
         return outputs
 
     def postprocess_masks(
@@ -161,6 +167,74 @@ class Sam(nn.Module):
         masks = F.interpolate(masks, original_size, mode="bilinear", align_corners=False)
         return masks
 
+
+    def get_bounding_polygon(self, mask, eps_value=0.005):
+        """ Gets the bounding polygon for the given mask
+
+        Args:
+            mask(array):
+                Input array
+            eps_value(float):
+                Value for approxiamation
+
+        Returns:
+            (list):
+                polygon_pts(list):
+                    A list of list consisting of polygon points.
+                    Each element in list is of shape M x N x 2:
+                    Here N represents number of points of the polygon.
+                    M represents inside and outside polygons.
+                    If M == 1, it means single polygon which is inside.
+                    If M == 2 or more, it means that the first polygon is inside
+                    and the rest are outside.
+        """
+        mask = np.uint8(np.where(mask != 0, 255, 0))
+        # Find all contours
+        all_contours, all_hierarchy = cv2.findContours(mask,
+                                                    cv2.RETR_TREE,
+                                                    cv2.CHAIN_APPROX_SIMPLE)
+        type_map = {}
+        for i, contour in enumerate(all_contours):
+            idx = str(i)
+            if len(contour) < 4:
+                continue
+
+            epsilon = eps_value * cv2.arcLength(contour, True)
+
+            approx = cv2.approxPolyDP(contour, epsilon, True).squeeze().tolist()
+            if not np.array_equal(approx[0], approx[-1]):
+                approx += [approx[0]]
+
+            parent = str(all_hierarchy[0][i][3])
+
+            if parent == "-1":
+                type_map[idx] = {}
+                type_map[idx]["type"] = "inside"
+                type_map[idx]["poly"] = [approx]
+            else:
+                parent_dict = type_map.get(parent, None)
+                parent_type = parent_dict["type"]
+                if parent_type == "inside":
+                    type_map[idx] = {}
+                    type_map[idx]["type"] = "outside"
+                    type_map[parent]["poly"].append(approx)
+                else:
+                    type_map[idx] = {}
+                    type_map[idx]["type"] = "inside"
+                    type_map[idx]["poly"] = [approx]
+
+        polygons = []
+        for key in list(type_map.keys()):
+            value = type_map[key]
+            if value["type"] == "outside":
+                continue
+            else:
+                polygons.append(type_map[key]["poly"])
+        return polygons
+
+
+
+    
     def preprocess(self, x: torch.Tensor) -> torch.Tensor:
         """Normalize pixel values and pad to a square input."""
         # Normalize colors

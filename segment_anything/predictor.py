@@ -14,6 +14,7 @@ import numpy as np
 from segment_anything.modeling import Sam
 from .utils.transforms import ResizeLongestSide
 
+MAX_LENGTH = 100
 
 class SamPredictorPoly:
     def __init__(
@@ -167,7 +168,7 @@ class SamPredictorPoly:
             multimask_output,
             return_logits=return_logits,
         )
-
+    
         masks_np = masks[0].detach().cpu().numpy()
         iou_predictions_np = iou_predictions[0].detach().cpu().numpy()
         low_res_masks_np = low_res_masks[0].detach().cpu().numpy()
